@@ -1,6 +1,6 @@
 import streamlit as st
 import re
-import pyodbc
+import sqlite3
 import hashlib
 import random
 import string
@@ -58,14 +58,8 @@ SEAT_PRICE_MULTIPLIERS = {
 # ===== DATABASE FUNCTIONS =====
 def connect_db():
     try:
-        server = 'DESKTOP-O93TIKV\SQLEXPRESS'
-        database = 'AirlineBooking_dbms'
-        conn = pyodbc.connect(
-            f'DRIVER={{ODBC Driver 17 for SQL Server}};'
-            f'SERVER={server};'
-            f'DATABASE={database};'
-            'Trusted_Connection=yes;'
-        )
+        conn = sqlite3.connect('airline_booking.db', check_same_thread=False)
+        conn.row_factory = sqlite3.Row  # This allows accessing columns by name
         return conn
     except Exception as e:
         st.error(f"Database connection failed: {e}")
@@ -79,11 +73,10 @@ def init_db():
     try:
         cursor = conn.cursor()
         
-        # Create tables with SQL Server syntax
+        # Create tables with SQLite syntax
         cursor.execute("""
-            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='admins' AND xtype='U')
-            CREATE TABLE admins (
-                id INT IDENTITY(1,1) PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS admins (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username VARCHAR(255) UNIQUE NOT NULL,
                 password_hash VARCHAR(255) NOT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -91,23 +84,21 @@ def init_db():
         """)
         
         cursor.execute("""
-            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='staff' AND xtype='U')
-            CREATE TABLE staff (
-                id INT IDENTITY(1,1) PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS staff (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 staff_id VARCHAR(20) UNIQUE NOT NULL,
                 full_name VARCHAR(255) NOT NULL,
                 email VARCHAR(255) UNIQUE NOT NULL,
                 password_hash VARCHAR(255) NOT NULL,
                 role VARCHAR(50) NOT NULL,
-                must_change_pass BIT DEFAULT 1,
+                must_change_pass BOOLEAN DEFAULT 1,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
         
         cursor.execute("""
-            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='customers' AND xtype='U')
-            CREATE TABLE customers (
-                id INT IDENTITY(1,1) PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS customers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 passport_no VARCHAR(20) UNIQUE NOT NULL,
                 full_name VARCHAR(255) NOT NULL,
                 date_of_birth DATE NOT NULL,
@@ -116,132 +107,127 @@ def init_db():
                 phone VARCHAR(20) NOT NULL,
                 username VARCHAR(50) UNIQUE NOT NULL,
                 password_hash VARCHAR(255) NOT NULL,
-                must_change_pass BIT DEFAULT 1,
+                must_change_pass BOOLEAN DEFAULT 1,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                loyalty_points INT DEFAULT 0
+                loyalty_points INTEGER DEFAULT 0
             )
         """)
         
         cursor.execute("""
-            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='aircraft' AND xtype='U')
-            CREATE TABLE aircraft (
-                id INT IDENTITY(1,1) PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS aircraft (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 registration_no VARCHAR(20) UNIQUE NOT NULL,
                 aircraft_type VARCHAR(100) NOT NULL,
-                total_seats INT NOT NULL,
-                economy_seats INT NOT NULL,
-                premium_economy_seats INT NOT NULL,
-                business_seats INT NOT NULL,
-                first_seats INT NOT NULL,
+                total_seats INTEGER NOT NULL,
+                economy_seats INTEGER NOT NULL,
+                premium_economy_seats INTEGER NOT NULL,
+                business_seats INTEGER NOT NULL,
+                first_seats INTEGER NOT NULL,
                 last_maintenance DATE NOT NULL,
                 next_maintenance DATE NOT NULL
             )
         """)
         
         cursor.execute("""
-            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='flights' AND xtype='U')
-            CREATE TABLE flights (
-                id INT IDENTITY(1,1) PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS flights (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 flight_no VARCHAR(10) NOT NULL,
                 departure_airport VARCHAR(10) NOT NULL,
                 arrival_airport VARCHAR(10) NOT NULL,
                 departure_time DATETIME NOT NULL,
                 arrival_time DATETIME NOT NULL,
-                aircraft_reg VARCHAR(20) NOT NULL,  # Changed from aircraft_id to aircraft_reg
+                aircraft_reg VARCHAR(20) NOT NULL,
                 base_price DECIMAL(10,2) NOT NULL,
-                status VARCHAR(20) DEFAULT 'Scheduled' CHECK (status IN ('Scheduled','Boarding','Departed','Arrived','Cancelled','Delayed')),
-                FOREIGN KEY (aircraft_reg) REFERENCES aircraft(registration_no)  # Changed foreign key reference
+                status VARCHAR(20) DEFAULT 'Scheduled',
+                FOREIGN KEY (aircraft_reg) REFERENCES aircraft(registration_no)
             )
         """)
         
         cursor.execute("""
-            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='bookings' AND xtype='U')
-            CREATE TABLE bookings (
-                id INT IDENTITY(1,1) PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS bookings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 booking_ref VARCHAR(10) UNIQUE NOT NULL,
-                customer_id INT NOT NULL,
-                flight_id INT NOT NULL,
+                customer_id INTEGER NOT NULL,
+                flight_id INTEGER NOT NULL,
                 booking_date DATETIME DEFAULT CURRENT_TIMESTAMP,
                 seat_class VARCHAR(20) NOT NULL,
-                seat_count INT NOT NULL,
+                seat_count INTEGER NOT NULL,
                 total_amount DECIMAL(10,2) NOT NULL,
-                status VARCHAR(20) DEFAULT 'Confirmed' CHECK (status IN ('Confirmed','Cancelled','Completed')),
+                status VARCHAR(20) DEFAULT 'Confirmed',
                 FOREIGN KEY (customer_id) REFERENCES customers(id),
                 FOREIGN KEY (flight_id) REFERENCES flights(id)
             )
         """)
         
         cursor.execute("""
-            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='passengers' AND xtype='U')
-            CREATE TABLE passengers (
-                id INT IDENTITY(1,1) PRIMARY KEY,
-                booking_id INT NOT NULL,
+            CREATE TABLE IF NOT EXISTS passengers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                booking_id INTEGER NOT NULL,
                 full_name VARCHAR(255) NOT NULL,
                 passport_no VARCHAR(20) NOT NULL,
                 date_of_birth DATE NOT NULL,
                 nationality VARCHAR(100) NOT NULL,
                 seat_number VARCHAR(10),
-                special_requests VARCHAR(500),  # Changed from TEXT to VARCHAR
+                special_requests VARCHAR(500),
                 FOREIGN KEY (booking_id) REFERENCES bookings(id)
             )
         """)
         
         cursor.execute("""
-            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='payments' AND xtype='U')
-            CREATE TABLE payments (
-                id INT IDENTITY(1,1) PRIMARY KEY,
-                booking_id INT NOT NULL,
+            CREATE TABLE IF NOT EXISTS payments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                booking_id INTEGER NOT NULL,
                 amount DECIMAL(10,2) NOT NULL,
                 payment_date DATETIME DEFAULT CURRENT_TIMESTAMP,
                 payment_method VARCHAR(50) NOT NULL,
                 transaction_id VARCHAR(100),
-                status VARCHAR(20) DEFAULT 'Completed' CHECK (status IN ('Pending','Completed','Failed','Refunded')),
+                status VARCHAR(20) DEFAULT 'Completed',
                 FOREIGN KEY (booking_id) REFERENCES bookings(id)
             )
         """)
         
         cursor.execute("""
-            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='flight_seats' AND xtype='U')
-            CREATE TABLE flight_seats (
-                id INT IDENTITY(1,1) PRIMARY KEY,
-                flight_id INT NOT NULL,
+            CREATE TABLE IF NOT EXISTS flight_seats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                flight_id INTEGER NOT NULL,
                 seat_number VARCHAR(10) NOT NULL,
                 seat_class VARCHAR(20) NOT NULL,
-                is_available BIT DEFAULT 1,
-                booking_id INT,
-                UNIQUE (flight_id, seat_number),
+                is_available BOOLEAN DEFAULT 1,
+                booking_id INTEGER,
+                UNIQUE(flight_id, seat_number),
                 FOREIGN KEY (flight_id) REFERENCES flights(id),
                 FOREIGN KEY (booking_id) REFERENCES bookings(id)
             )
         """)
         
         cursor.execute("""
-            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='promotions' AND xtype='U')
-            CREATE TABLE promotions (
-                id INT IDENTITY(1,1) PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS promotions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 code VARCHAR(20) UNIQUE NOT NULL,
-                description VARCHAR(500) NOT NULL,  # Changed from TEXT to VARCHAR
+                description VARCHAR(500) NOT NULL,
                 discount_percent DECIMAL(5,2) NOT NULL,
                 valid_from DATE NOT NULL,
                 valid_to DATE NOT NULL,
-                max_uses INT,
-                current_uses INT DEFAULT 0
+                max_uses INTEGER,
+                current_uses INTEGER DEFAULT 0
             )
         """)
         
         # Insert preset admin if not exists
-        cursor.execute("""
-            IF NOT EXISTS (SELECT 1 FROM admins WHERE username = ?)
-            INSERT INTO admins (username, password_hash)
-            VALUES (?, ?)
-        """, (PRESET_ADMIN["username"], PRESET_ADMIN["username"], hash_password(PRESET_ADMIN["password"])))
+        cursor.execute("SELECT 1 FROM admins WHERE username = ?", (PRESET_ADMIN["username"],))
+        if not cursor.fetchone():
+            cursor.execute("""
+                INSERT INTO admins (username, password_hash)
+                VALUES (?, ?)
+            """, (PRESET_ADMIN["username"], hash_password(PRESET_ADMIN["password"])))
         
         # Insert sample promotions
-        cursor.execute("""
-            IF NOT EXISTS (SELECT 1 FROM promotions WHERE code = 'WELCOME10')
-            INSERT INTO promotions (code, description, discount_percent, valid_from, valid_to, max_uses)
-            VALUES ('WELCOME10', '10% discount for new customers', 10.00, ?, ?, 100)
-        """, (datetime.now().date(), datetime.now().date() + timedelta(days=365)))
+        cursor.execute("SELECT 1 FROM promotions WHERE code = 'WELCOME10'")
+        if not cursor.fetchone():
+            cursor.execute("""
+                INSERT INTO promotions (code, description, discount_percent, valid_from, valid_to, max_uses)
+                VALUES ('WELCOME10', '10% discount for new customers', 10.00, ?, ?, 100)
+            """, (datetime.now().date(), datetime.now().date() + timedelta(days=365)))
         
         conn.commit()
         return True
@@ -306,10 +292,9 @@ def admin_login(username, password):
             WHERE username = ? AND password_hash = ?
         """, (username, hash_password(password)))
         
-        columns = [column[0] for column in cursor.description]
         admin = cursor.fetchone()
         if admin:
-            return dict(zip(columns, admin))
+            return dict(admin)
         return None
     except Exception as e:
         st.error(f"🔴 Login Error: {e}")
@@ -471,11 +456,11 @@ def get_flight_stats():
         
         # Revenue (with NULL handling)
         cursor.execute("""
-            SELECT ISNULL(SUM(total_amount), 0) 
+            SELECT IFNULL(SUM(total_amount), 0) 
             FROM bookings 
             WHERE status != 'Cancelled'
         """)
-        total_revenue = cursor.fetchone()[0]
+        total_revenue = cursor.fetchone()[0] or 0
         
         # Flight status counts
         cursor.execute("""
@@ -487,7 +472,7 @@ def get_flight_stats():
         
         # Popular routes (by booking count)
         cursor.execute("""
-            SELECT TOP 5 
+            SELECT 
                 f.departure_airport, 
                 f.arrival_airport, 
                 COUNT(b.id) as booking_count
@@ -495,6 +480,7 @@ def get_flight_stats():
             LEFT JOIN bookings b ON f.id = b.flight_id
             GROUP BY f.departure_airport, f.arrival_airport
             ORDER BY booking_count DESC
+            LIMIT 5
         """)
         popular_routes = [
             {"route": f"{row[0]} → {row[1]}", "bookings": row[2]} 
@@ -503,7 +489,7 @@ def get_flight_stats():
         
         # Recent bookings with customer info
         cursor.execute("""
-            SELECT TOP 5 
+            SELECT 
                 b.booking_ref, 
                 c.full_name, 
                 f.flight_no, 
@@ -514,6 +500,7 @@ def get_flight_stats():
             JOIN customers c ON b.customer_id = c.id
             JOIN flights f ON b.flight_id = f.id
             ORDER BY b.booking_date DESC
+            LIMIT 5
         """)
         recent_bookings = [
             {
@@ -534,9 +521,6 @@ def get_flight_stats():
             'recent_bookings': recent_bookings
         }
         
-    except pyodbc.Error as e:
-        st.error(f"Database error: {str(e)}")
-        return None
     except Exception as e:
         st.error(f"Error getting stats: {str(e)}")
         return None
@@ -566,14 +550,12 @@ def get_customer_bookings(customer_id):
             ORDER BY f.departure_time DESC
         """, (customer_id,))
         
-        columns = [column[0] for column in cursor.description]
-        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+        return [dict(row) for row in cursor.fetchall()]
     except Exception as e:
         st.error(f"Error getting customer bookings: {e}")
         return []
     finally:
         conn.close()
-
 
 def staff_login(staff_id, password):
     conn = connect_db()
@@ -586,8 +568,7 @@ def staff_login(staff_id, password):
                       (staff_id, hash_password(password)))
         staff = cursor.fetchone()
         if staff:
-            columns = [column[0] for column in cursor.description]
-            return dict(zip(columns, staff))
+            return dict(staff)
         return None
     except Exception as e:
         st.error(f"Staff login error: {e}")
@@ -606,8 +587,7 @@ def customer_login(username, password):
                       (username, hash_password(password)))
         customer = cursor.fetchone()
         if customer:
-            columns = [column[0] for column in cursor.description]
-            return dict(zip(columns, customer))
+            return dict(customer)
         return None
     except Exception as e:
         st.error(f"Customer login error: {e}")
@@ -657,8 +637,7 @@ def get_staff():
     try:
         cursor = conn.cursor()
         cursor.execute("SELECT staff_id, full_name, email, role, created_at FROM staff ORDER BY created_at DESC")
-        columns = [column[0] for column in cursor.description]
-        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+        return [dict(row) for row in cursor.fetchall()]
     except Exception as e:
         st.error(f"Get staff error: {e}")
         return []
@@ -734,8 +713,7 @@ def get_customers():
             FROM customers
             ORDER BY created_at DESC
         """)
-        columns = [column[0] for column in cursor.description]
-        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+        return [dict(row) for row in cursor.fetchall()]
     except Exception as e:
         st.error(f"Get customers error: {e}")
         return []
@@ -778,6 +756,7 @@ def remove_customer(passport_no):
         return False
     finally:
         conn.close()
+
 # ===== AIRCRAFT FUNCTIONS =====
 def get_aircraft():
     """Retrieve all aircraft from the database"""
@@ -795,13 +774,7 @@ def get_aircraft():
             ORDER BY registration_no
         """)
         
-        # Ensure ID is properly cast to int
-        columns = [column[0] for column in cursor.description]
-        aircraft_list = []
-        for row in cursor.fetchall():
-            aircraft = dict(zip(columns, row))
-            aircraft['id'] = int(aircraft['id'])  # Ensure ID is integer
-            aircraft_list.append(aircraft)
+        aircraft_list = [dict(row) for row in cursor.fetchall()]
         return aircraft_list
     except Exception as e:
         st.error(f"Error retrieving aircraft: {str(e)}")
@@ -829,8 +802,8 @@ def add_aircraft(reg_no, aircraft_type, economy, premium, business, first, last_
         ))
         conn.commit()
         st.success("Aircraft added successfully!")
-        return True  # Changed from returning ID to just success status
-    except pyodbc.IntegrityError:
+        return True
+    except sqlite3.IntegrityError:
         st.error("An aircraft with this registration number already exists")
         return False
     except Exception as e:
@@ -841,7 +814,7 @@ def add_aircraft(reg_no, aircraft_type, economy, premium, business, first, last_
 
 # ===== FLIGHT FUNCTIONS =====
 def get_flights(status_filter=None):
-    """Retrieve flights with optional status filter, using aircraft registration numbers"""
+    """Retrieve flights with optional status filter"""
     conn = connect_db()
     if not conn:
         return []
@@ -856,14 +829,14 @@ def get_flights(status_filter=None):
                 f.arrival_airport,
                 f.departure_time, 
                 f.arrival_time, 
-                a.registration_no as aircraft_reg,
+                f.aircraft_reg,
                 a.aircraft_type, 
                 f.base_price, 
                 f.status,
                 (SELECT COUNT(*) FROM flight_seats fs 
                  WHERE fs.flight_id = f.id AND fs.is_available = 1) as available_seats
             FROM flights f
-            JOIN aircraft a ON f.aircraft_id = a.id
+            JOIN aircraft a ON f.aircraft_reg = a.registration_no
         """
         params = []
         
@@ -874,10 +847,9 @@ def get_flights(status_filter=None):
         query += " ORDER BY f.departure_time"
         cursor.execute(query, params)
         
-        columns = [column[0] for column in cursor.description]
         flights = []
         for row in cursor.fetchall():
-            flight = dict(zip(columns, row))
+            flight = dict(row)
             # Convert datetime strings to datetime objects if needed
             if isinstance(flight['departure_time'], str):
                 flight['departure_time'] = datetime.strptime(flight['departure_time'], '%Y-%m-%d %H:%M:%S')
@@ -891,8 +863,9 @@ def get_flights(status_filter=None):
         return []
     finally:
         conn.close()
+
 def get_available_flights(departure_airport=None, arrival_airport=None, date=None):
-    """Get available flights with optional filters, using aircraft registration numbers"""
+    """Get available flights with optional filters"""
     conn = connect_db()
     if not conn:
         return []
@@ -926,14 +899,13 @@ def get_available_flights(departure_airport=None, arrival_airport=None, date=Non
             query += " AND f.arrival_airport = ?"
             params.append(arrival_airport)
         if date:
-            query += " AND CAST(f.departure_time AS DATE) = ?"
+            query += " AND DATE(f.departure_time) = ?"
             params.append(date)
         
         query += " ORDER BY f.departure_time"
         cursor.execute(query, params)
         
-        columns = [column[0] for column in cursor.description]
-        flights = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        flights = [dict(row) for row in cursor.fetchall()]
         
         # Filter out flights with no available seats
         return [flight for flight in flights if flight['available_seats'] > 0]
@@ -942,8 +914,9 @@ def get_available_flights(departure_airport=None, arrival_airport=None, date=Non
         return []
     finally:
         conn.close()
+
 def get_flight_details(flight_id):
-    """Get detailed information about a specific flight using aircraft registration number"""
+    """Get detailed information about a specific flight"""
     conn = connect_db()
     if not conn:
         return None
@@ -951,7 +924,7 @@ def get_flight_details(flight_id):
     try:
         cursor = conn.cursor()
         
-        # Get basic flight info - now joining on aircraft_reg instead of aircraft_id
+        # Get basic flight info
         cursor.execute("""
             SELECT f.*, a.registration_no, a.aircraft_type,
                    a.economy_seats, a.premium_economy_seats,
@@ -965,10 +938,9 @@ def get_flight_details(flight_id):
         if not flight:
             return None
         
-        columns = [column[0] for column in cursor.description]
-        flight_dict = dict(zip(columns, flight))
+        flight_dict = dict(flight)
         
-        # Get seat availability by class (unchanged as it uses flight_id which is correct)
+        # Get seat availability by class
         cursor.execute("""
             SELECT seat_class, COUNT(*) as total,
                    SUM(CASE WHEN is_available = 1 THEN 1 ELSE 0 END) as available
@@ -978,7 +950,7 @@ def get_flight_details(flight_id):
         """, (flight_id,))
         
         flight_dict['seat_availability'] = {
-            row.seat_class: {'total': row.total, 'available': row.available}
+            row[0]: {'total': row[1], 'available': row[2]}
             for row in cursor.fetchall()
         }
         
@@ -1006,16 +978,16 @@ def get_available_seats(flight_id, seat_class):
             ORDER BY seat_number
         """, (flight_id, seat_class))
         
-        return [row.seat_number for row in cursor.fetchall()]
+        return [row[0] for row in cursor.fetchall()]
     except Exception as e:
         st.error(f"Error retrieving available seats: {str(e)}")
         return []
     finally:
         conn.close()
+
 def add_flight(flight_no, dep_airport, arr_airport, departure_datetime, arrival_datetime, aircraft_reg, base_price):
     """
-    Adds a new flight to the system using aircraft registration numbers instead of IDs
-    with comprehensive validation and seat creation
+    Adds a new flight to the system with comprehensive validation and seat creation
     """
     # Validate all required fields are provided
     if not all([flight_no, dep_airport, arr_airport, departure_datetime, arrival_datetime, aircraft_reg, base_price]):
@@ -1087,7 +1059,7 @@ def add_flight(flight_no, dep_airport, arr_airport, departure_datetime, arrival_
                 st.error(f"Flight {flight_no} already exists")
                 return False
 
-            # Check aircraft availability using registration number
+            # Check aircraft availability
             cursor.execute("""
                 SELECT flight_no FROM flights 
                 WHERE aircraft_reg = ? 
@@ -1112,7 +1084,7 @@ def add_flight(flight_no, dep_airport, arr_airport, departure_datetime, arrival_
                 st.error(f"Aircraft is already booked for flight {conflicting_flight[0]} during this time period")
                 return False
 
-            # Insert flight record using registration number
+            # Insert flight record
             cursor.execute("""
                 INSERT INTO flights (
                     flight_no, departure_airport, arrival_airport,
@@ -1129,14 +1101,13 @@ def add_flight(flight_no, dep_airport, arr_airport, departure_datetime, arrival_
             ))
 
             # Get the newly created flight ID
-            cursor.execute("SELECT SCOPE_IDENTITY()")
-            flight_id = cursor.fetchone()[0]
+            flight_id = cursor.lastrowid
             if not flight_id:
                 st.error("Failed to create flight record")
                 conn.rollback()
                 return False
 
-            # Get aircraft seat configuration using registration number
+            # Get aircraft seat configuration
             cursor.execute("""
                 SELECT economy_seats, premium_economy_seats, business_seats, first_seats 
                 FROM aircraft WHERE registration_no = ?
@@ -1191,7 +1162,7 @@ def add_flight(flight_no, dep_airport, arr_airport, departure_datetime, arrival_
             """)
             return True
 
-        except pyodbc.Error as e:
+        except Exception as e:
             st.error(f"Database error: {str(e)}")
             conn.rollback()
             return False
@@ -1201,6 +1172,7 @@ def add_flight(flight_no, dep_airport, arr_airport, departure_datetime, arrival_
     except Exception as e:
         st.error(f"Unexpected error: {str(e)}")
         return False
+
 def update_flight_status(flight_id, new_status):
     """Update the status of a flight"""
     valid_statuses = ['Scheduled', 'Boarding', 'Departed', 'Arrived', 'Cancelled', 'Delayed']
@@ -1264,8 +1236,7 @@ def get_bookings(customer_id=None, flight_id=None):
         query += " ORDER BY b.booking_date DESC"
         cursor.execute(query, params)
         
-        columns = [column[0] for column in cursor.description]
-        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+        return [dict(row) for row in cursor.fetchall()]
     except Exception as e:
         st.error(f"Error retrieving bookings: {str(e)}")
         return []
@@ -1296,8 +1267,7 @@ def get_booking_details(booking_id):
         if not booking:
             return None
         
-        columns = [column[0] for column in cursor.description]
-        booking_dict = dict(zip(columns, booking))
+        booking_dict = dict(booking)
         
         # Get passengers
         cursor.execute("""
@@ -1308,12 +1278,12 @@ def get_booking_details(booking_id):
         """, (booking_id,))
         
         booking_dict['passengers'] = [{
-            'name': row.full_name,
-            'passport': row.passport_no,
-            'dob': row.date_of_birth,
-            'nationality': row.nationality,
-            'seat': row.seat_number,
-            'requests': row.special_requests
+            'name': row[0],
+            'passport': row[1],
+            'dob': row[2],
+            'nationality': row[3],
+            'seat': row[4],
+            'requests': row[5]
         } for row in cursor.fetchall()]
         
         # Get payment info
@@ -1326,10 +1296,10 @@ def get_booking_details(booking_id):
         payment = cursor.fetchone()
         if payment:
             booking_dict['payment'] = {
-                'amount': payment.amount,
-                'date': payment.payment_date,
-                'method': payment.payment_method,
-                'status': payment.status
+                'amount': payment[0],
+                'date': payment[1],
+                'method': payment[2],
+                'status': payment[3]
             }
         
         return booking_dict
@@ -1364,8 +1334,8 @@ def create_booking(customer_id, flight_id, passengers, seat_class, selected_seat
             st.error("Flight not available for booking")
             return None
         
-        base_price = flight_data.base_price
-        departure_time = flight_data.departure_time
+        base_price = flight_data[0]
+        departure_time = flight_data[1]
         
         # Calculate total amount
         price_multiplier = SEAT_PRICE_MULTIPLIERS.get(seat_class, 1.0)
@@ -1383,7 +1353,7 @@ def create_booking(customer_id, flight_id, passengers, seat_class, selected_seat
             seat_class, len(passengers), total_amount
         ))
         
-        booking_id = cursor.execute("SELECT SCOPE_IDENTITY()").fetchone()[0]
+        booking_id = cursor.lastrowid
         
         # Add passengers
         for i, passenger in enumerate(passengers):
@@ -1446,7 +1416,7 @@ def cancel_booking(booking_id):
             st.error("Booking not found")
             return False
         
-        if booking.status == 'Cancelled':
+        if booking[1] == 'Cancelled':
             st.error("Booking is already cancelled")
             return False
         
@@ -1844,6 +1814,7 @@ def render_auth_screen():
                         if username:
                             st.success(f"Registration successful! Your username is: {username}")
                             st.info("Please login with your new credentials")
+
 def render_admin_dashboard():
     st.sidebar.title("Admin Dashboard")
     menu = st.sidebar.radio(
@@ -2049,10 +2020,10 @@ def render_admin_dashboard():
                 departure_datetime = datetime.combine(dep_date, dep_time)
                 arrival_datetime = datetime.combine(arr_date, arr_time)
                 
-                # Aircraft selection using aircraft ID
-                aircraft_id = st.selectbox(
+                # Aircraft selection using registration number
+                aircraft_reg = st.selectbox(
                     "Aircraft*",
-                    [(a['id'], f"{a['registration_no']} - {a['aircraft_type']}") for a in aircraft_list],
+                    [(a['registration_no'], f"{a['registration_no']} - {a['aircraft_type']}") for a in aircraft_list],
                     format_func=lambda x: x[1],
                     key="aircraft_select"
                 )
@@ -2066,7 +2037,7 @@ def render_admin_dashboard():
                         arr_airport=arr_airport,
                         departure_datetime=departure_datetime,
                         arrival_datetime=arrival_datetime,
-                        aircraft_id=aircraft_id[0],  # Get the ID from the tuple
+                        aircraft_reg=aircraft_reg[0],  # Get the registration number from the tuple
                         base_price=base_price
                     ):
                         st.rerun()
@@ -2131,6 +2102,7 @@ def render_admin_dashboard():
                     st.session_state.auth['user_data']['password_hash'] = hash_password(new)
                 else:
                     st.error("Failed to update password")
+
 def render_staff_dashboard():
     staff = st.session_state.auth['user_data']
     st.sidebar.title(f"Welcome, {staff['full_name']}")
@@ -2683,7 +2655,7 @@ def render_customer_dashboard():
                                 conn.commit()
                                 conn.close()
                                 
-                                st.session_state.auth['user_data']['loyalty_points'] += points_earned
+                                st.session_state.auth['user_data']['loyalty_points'] = st.session_state.auth['user_data'].get('loyalty_points', 0) + points_earned
                                 
                                 email_body = f"""
                                 Thank you for your booking!
